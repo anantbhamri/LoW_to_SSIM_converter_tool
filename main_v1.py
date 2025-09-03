@@ -356,166 +356,6 @@ def format_utc_offset(offset):
 def ssim_time_field(t):
     return str(t).zfill(4)
 
-def write_ssim_with_segments_v0(all_legs, shells, filename, schedule_first_date, schedule_last_date):
-    """Write SSIM file with Type 3 and Type 4 records"""
-    
-    # Time zone mode: L for local, U for UTC
-    time_zone = 'L'
-    
-    # Find operation date range (first and last actual operation dates)
-    first_op_date, last_op_date = find_operation_date_range(all_legs, time_zone)
-    
-    print(f"Schedule period: {schedule_first_date.strftime('%d%b%y')} to {schedule_last_date.strftime('%d%b%y')}")
-    print(f"Operation period ({'Local' if time_zone == 'L' else 'UTC'}): {first_op_date.strftime('%d%b%y')} to {last_op_date.strftime('%d%b%y')}")
-    
-    with open(filename, 'w') as out:
-        # SSIM Header Type 1
-        out.write("1AIRLINE STANDARD SCHEDULE DATA SET                                                                                                                                                            001000001\n")
-        
-        # Add 4 lines of 200 characters with all zeros
-        for _ in range(4):
-            out.write("0" * 200 + "\n")
-        
-        # SSIM Header Type 2 - with actual date ranges
-        today_date = datetime.now()
-        header2 = f"2{time_zone}DL  0008    {first_op_date.strftime('%d%b%y').upper()}{last_op_date.strftime('%d%b%y').upper()}{today_date.strftime('%d%b%y').upper()}                                    PCreated by Python LoW-to-SSIM Converter"
-        header2 = pad_right(header2, 188) + "EN1140000002"
-        out.write(header2 + "\n")
-        
-        # Add 4 more lines of 200 characters with all zeros
-        for _ in range(4):
-            out.write("0" * 200 + "\n")
-
-        record_serial = 3
-        
-        for shell_id, shell_legs in shells.items():
-            for idx, leg in enumerate(shell_legs):
-                # Find next leg (onward flight) in this shell
-                next_leg = shell_legs[idx+1] if idx + 1 < len(shell_legs) else None
-
-                # ===== EXTRACT RAW VALUES (NO PADDING) =====
-                
-                # Basic flight information
-                raw_airline_code = leg.get('Aln', 'DL')
-                raw_flight_number = leg.get('Flt Num', '')
-                raw_itinerary_var = leg.get('Line Num', '1')
-                raw_leg_seq_num = leg.get('Leg Seq num', '1')
-                raw_service_type = leg.get('Service Type', 'J')
-                
-                # Date and time information
-                raw_dep_dt = leg["Dept DateTime"]
-                raw_arr_dt = leg["Arvl DateTime"]
-                raw_dep_date_str = format_ssim_date(raw_dep_dt)
-                raw_arr_date_str = format_ssim_date(raw_arr_dt)
-                raw_day_of_week = raw_dep_dt.strftime('%u') if raw_dep_dt else '1'
-                
-                # Airport and time information
-                raw_dep_airport = leg.get('Dept Sta', '')
-                raw_arr_airport = leg.get('Arvl Sta', '')
-                raw_dep_time = leg["Dept Time"]
-                raw_arr_time = leg["Arvl Time"]
-                
-                # UTC offsets
-                raw_dep_offset_hours = leg["Dept UTC Offset"]
-                raw_arr_offset_hours = leg["Arvl UTC Offset"]
-                
-                # Aircraft information
-                raw_ac_type = leg.get('Equip', '73J')
-                raw_ac_config = leg.get('AC Config', '')
-                raw_ac_owner = '' #leg.get('A/C Own', '')
-                
-                # Next flight (onward) information
-                raw_onward_airline = next_leg.get('Aln', '') if next_leg else ''
-                raw_onward_fltno = next_leg.get('Flt Num', '') if next_leg else ''
-                raw_onward_leg_var = '' #next_leg.get('Line Num', '') if next_leg else ''
-                raw_onward_leg_seq = '' #next_leg.get('Leg Seq num', '') if next_leg else ''
-                
-                # Convert raw values to formatted strings
-                formatted_dep_time = ssim_time_field(raw_dep_time)
-                formatted_arr_time = ssim_time_field(raw_arr_time)
-                formatted_dep_offset = format_utc_offset(raw_dep_offset_hours)
-                formatted_arr_offset = format_utc_offset(raw_arr_offset_hours)
-                formatted_period_of_op = raw_dep_date_str + raw_dep_date_str
-                
-                # reason code 
-                reason_code = leg.get('REASON CODE', ' ')
-                if reason_code == 'CRWB':
-                    debug_point = 1
-                # ===== BUILD TYPE 3 RECORD WITH PROPER PADDING =====
-                
-                rec = ''
-                rec += pad_right('3', 1)                                    # Pos 1: Record Type
-                rec += pad_right('', 1)                                     # Pos 2: Operational Suffix
-                rec += pad_right(raw_airline_code, 3)                       # Pos 3-5: Airline Code
-                rec += pad_left(raw_flight_number, 4)                       # Pos 6-9: Flight Number
-                rec += pad_left(raw_itinerary_var, 2, '0')                  # Pos 10-11: Itinerary Variant
-                rec += pad_left(raw_leg_seq_num, 2, '0')                    # Pos 12-13: Leg Sequence
-                rec += pad_right(raw_service_type, 1)                       # Pos 14: Service Type
-                rec += pad_right(formatted_period_of_op, 14)                # Pos 15-28: Period of Operation
-                rec += pad_left(raw_day_of_week, 7)                         # Pos 29-35: Days of Operation
-                rec += pad_right('', 1)                                     # Pos 36: Frequency Rate
-                rec += pad_right(raw_dep_airport, 3)                        # Pos 37-39: Departure Airport
-                rec += pad_right(formatted_dep_time, 4)                     # Pos 40-43: Departure Time
-                rec += pad_right(formatted_dep_time, 4)                     # Pos 44-47: Departure Time (repeat)
-                rec += pad_right(formatted_dep_offset, 5)                   # Pos 48-52: Departure UTC Offset
-                rec += pad_right('', 2)                                     # Pos 53-54: Departure Terminal
-                rec += pad_right(raw_arr_airport, 3)                        # Pos 55-57: Arrival Airport
-                rec += pad_right(formatted_arr_time, 4)                     # Pos 58-61: Arrival Time
-                rec += pad_right(formatted_arr_time, 4)                     # Pos 62-65: Arrival Time (repeat)
-                rec += pad_right(formatted_arr_offset, 5)                   # Pos 66-70: Arrival UTC Offset
-                rec += pad_right('', 2)                                     # Pos 71-72: Arrival Terminal
-                rec += pad_right(raw_ac_type, 3)                            # Pos 73-75: Aircraft Type
-                rec += pad_right('', 23)                                    # Pos 76-98: Various fields (empty)
-                rec += pad_right(raw_ac_owner, 3)                           # Pos 99-101: Aircraft Owner
-                rec += pad_right('', 36)                                    # Pos 102-137: More fields (empty)
-                rec += pad_right(raw_onward_airline, 3)                     # Pos 138-140: Onward Airline
-                rec += pad_left(raw_onward_fltno, 4)                        # Pos 141-144: Onward Flight Number
-                rec += pad_left(raw_onward_leg_var, 1)                      # Pos 145-145: Aircraft Rotation Layover
-                rec += pad_left(raw_onward_leg_seq, 1)                      # Pos 146-146: Operational Suffix
-                rec += pad_right('', 26)                                    # Pos 147-172: More fields (empty)
-                rec += pad_right(raw_ac_config + 'VV10', 20)                # Pos 173-192: Aircraft Configuration
-                rec += pad_right('', 2)                                     # Pos 193-194: Date variation
-                rec += pad_left(str(record_serial), 6, '0')                 # Pos 195-200: Record Serial Number
-                
-                # Ensure exactly 200 characters
-                rec = pad_right(rec, 200)
-                out.write(rec + '\n')
-                record_serial += 1
-
-                # ===== BUILD TYPE 4 RECORD WITH PROPER PADDING =====
-                
-                seg = ''
-                seg += pad_right('4', 1)                                    # Pos 1: Record Type
-                seg += pad_right('', 1)                                     # Pos 2: Operational Suffix
-                seg += pad_right(raw_airline_code, 3)                       # Pos 3-5: Airline Code
-                seg += pad_left(raw_flight_number, 4)                       # Pos 6-9: Flight Number
-                seg += pad_left(raw_itinerary_var, 2, '0')                  # Pos 10-11: Itinerary Variant
-                seg += pad_left(raw_leg_seq_num, 2, '0')                    # Pos 12-13: Leg Sequence
-                seg += pad_right(raw_service_type, 1)                       # Pos 14: Service Type
-                seg += pad_right('', 13)                                    # Pos 15-27: Period fields (empty)
-                seg += pad_right('', 1)                                     # Pos 28: Itinerary Variant Overflow
-                seg += pad_right('A', 1)                                    # Pos 29: Board Point Indicator
-                seg += pad_right('B', 1)                                    # Pos 30: Off Point Indicator
-                seg += pad_left('997', 3, '0')                              # Pos 31-33: Data Element ID
-                seg += pad_right(raw_dep_airport, 3)                        # Pos 34-36: Board Point
-                seg += pad_right(raw_arr_airport, 3)                        # Pos 37-39: Off Point
-                
-                seg += pad_right(reason_code, 155)                          # Pos 40 - 194: Data (associated with Data Element Identifier)
-                
-                seg += pad_left(str(record_serial), 6, '0')                 # Pos 195-200: Record Serial Number
-                
-                # Ensure exactly 200 characters
-                seg = pad_right(seg, 200)
-                out.write(seg + '\n')
-                record_serial += 1
-
-        # SSIM Trailer
-        out.write("5                                                                                            000999\n")
-
-    print(f"✅ Wrote SSIM file: {filename}")
-    print(f"   Generated {record_serial - 3} records (Type 3 and 4 pairs)")
-    print(f"   Time zone mode: {'Local' if time_zone == 'L' else 'UTC'}")
-
 def write_ssim_with_segments(all_legs, shells, filename, schedule_first_date, schedule_last_date):
     """Write SSIM file with Type 3 and Type 4 records"""
     
@@ -575,6 +415,9 @@ def write_ssim_with_segments(all_legs, shells, filename, schedule_first_date, sc
                 # Find next leg within current shell
                 next_leg_in_shell = current_shell_legs[idx+1] if idx + 1 < len(current_shell_legs) else None
                 
+                # Determine if current leg is last leg of the aircraft's day
+                is_last_leg_of_aircraft = (next_leg_in_shell is None)
+                
                 # If this is the last leg of the shell, find the connecting shell
                 next_leg = next_leg_in_shell
                 if next_leg_in_shell is None:
@@ -623,11 +466,40 @@ def write_ssim_with_segments(all_legs, shells, filename, schedule_first_date, sc
                 raw_ac_config = leg.get('AC Config', '')
                 raw_ac_owner = '' #leg.get('A/C Own', '')
                 
-                # Next flight (onward) information
-                raw_onward_airline = next_leg.get('Aln', '') if next_leg else ''
-                raw_onward_fltno = next_leg.get('Flt Num', '') if next_leg else ''
-                raw_onward_leg_var = '' #next_leg.get('Line Num', '') if next_leg else ''
-                raw_onward_leg_seq = '' #next_leg.get('Leg Seq num', '') if next_leg else ''
+                # ===== SMART ONWARD FLIGHT LOGIC =====
+                
+                # Determine onward flight information with duplicate flight number handling
+                raw_onward_airline = ''
+                raw_onward_fltno = ''
+                raw_onward_leg_var = ''
+                raw_onward_leg_seq = ''
+                
+                if next_leg:
+                    current_flight_num = leg.get('Flt Num', '')
+                    next_flight_num = next_leg.get('Flt Num', '')
+                    
+                    # Check if we should include onward flight info
+                    include_onward_flight = True
+                    
+                    # If same aircraft (not last leg of aircraft) and same flight number, skip onward flight
+                    if not is_last_leg_of_aircraft and current_flight_num == next_flight_num and current_flight_num != '':
+                        include_onward_flight = False
+                        print(f"    Skipping onward flight for {current_flight_num}: same flight number as next leg on same aircraft")
+                    
+                    # If different aircraft (last leg connecting to first leg of next aircraft), always include
+                    elif is_last_leg_of_aircraft and next_leg:
+                        include_onward_flight = True
+                        print(f"    Including onward flight {next_flight_num}: connecting to next aircraft")
+                    
+                    # If same aircraft but different flight numbers, include onward flight
+                    elif not is_last_leg_of_aircraft and current_flight_num != next_flight_num:
+                        include_onward_flight = True
+                        print(f"    Including onward flight {next_flight_num}: different flight number on same aircraft")
+                    
+                    if include_onward_flight:
+                        raw_onward_airline = next_leg.get('Aln', '')
+                        raw_onward_fltno = next_leg.get('Flt Num', '')
+                        # raw_onward_leg_var and raw_onward_leg_seq remain empty as per original logic
                 
                 # Convert raw values to formatted strings
                 formatted_dep_time = ssim_time_field(raw_dep_time)
@@ -725,7 +597,6 @@ def write_ssim_with_segments(all_legs, shells, filename, schedule_first_date, sc
                     if unprocessed:
                         current_shell_id = unprocessed[0]
                         print(f"Starting new chain with Shell {current_shell_id}")
-
 
         # Add 4 lines of 200 characters with all zeros
         for _ in range(4):
